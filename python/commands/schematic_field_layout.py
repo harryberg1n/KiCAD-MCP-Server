@@ -24,6 +24,7 @@ from commands.schematic_text_utils import (
     _find_placed_symbol_block,
     _move_property_in_block,
 )
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -167,7 +168,7 @@ class SchematicFieldLayoutCommands:
                 }
 
             new_content = content[:block_start] + new_block + content[block_end + 1 :]
-            sch_path.write_text(new_content, encoding="utf-8")
+            write_sch_text(sch_path, new_content)
 
             old_str = (
                 f"({old_pos['x']}, {old_pos['y']}, {old_pos['angle']}°)" if old_pos else "unknown"
@@ -267,7 +268,7 @@ class SchematicFieldLayoutCommands:
                 )
 
             if applied:
-                sch_path.write_text(content, encoding="utf-8")
+                write_sch_text(sch_path, content)
 
             return {
                 "success": len(failed) == 0,

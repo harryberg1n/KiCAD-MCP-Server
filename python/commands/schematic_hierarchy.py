@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 
 import sexpdata
 from sexpdata import Symbol
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -114,7 +115,7 @@ class SchematicHierarchyCommands:
                         break
             content = content[:si_close] + path_entry + "  " + content[si_close:]
 
-            parent_file.write_text(content, encoding="utf-8")
+            write_sch_text(parent_file, content)
 
             # Ensure each sub-sheet component has the hierarchical instance entry.
             self.fix_subsheet_instances(str(parent_file), content)
@@ -275,7 +276,7 @@ class SchematicHierarchyCommands:
                     pos = end + 1
 
                 if changed:
-                    sub_sheet_path.write_text("".join(result_parts), encoding="utf-8")
+                    write_sch_text(sub_sheet_path, "".join(result_parts))
                     modified_sheets.append(str(sub_sheet_path))
                     logger.info(
                         f"Fixed instances in {sub_sheet_path} for sheet-block {sheet_block_uuid}"

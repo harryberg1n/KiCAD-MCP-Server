@@ -13,6 +13,7 @@ import re
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -503,8 +504,7 @@ class DynamicSymbolLoader:
         # Insert the symbol block just before the closing ) of lib_symbols
         content = content[:lib_sym_end] + "\n    " + indented_block + "\n  " + content[lib_sym_end:]
 
-        with open(schematic_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        write_sch_text(schematic_path, content)
 
         # Handle both Path objects and strings
         sch_name = schematic_path.name if hasattr(schematic_path, "name") else str(schematic_path)
@@ -959,8 +959,7 @@ class DynamicSymbolLoader:
         else:
             content = content[:insert_at] + instance_block + "\n  " + content[insert_at:]
 
-        with open(schematic_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        write_sch_text(schematic_path, content)
 
         logger.info(f"Added component instance {reference} ({full_lib_id}) at ({x}, {y})")
         return True

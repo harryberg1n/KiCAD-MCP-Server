@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.sexpr_format import prettify
+from utils.sch_io import write_sch_text
 
 
 def _find_symbol_in_lib_symbols(
@@ -96,7 +97,7 @@ def add_library_symbol_property(params: dict[str, Any]) -> dict[str, Any]:
             block = block.rstrip()[:-1] + "\n\t\t\t" + new_prop + "\n\t\t)"
 
     content = content[:sym_start] + block + content[sym_end + 1 :]
-    schematic_path.write_text(prettify(content), encoding="utf-8")
+    write_sch_text(schematic_path, prettify(content))
 
     return {
         "success": True,

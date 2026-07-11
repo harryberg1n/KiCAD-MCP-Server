@@ -27,6 +27,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -318,7 +319,7 @@ class SchematicDeclutterCommands:
                     )
                     n += 1 if changed else 0
                 if n:
-                    sch_path.write_text(content, encoding="utf-8")
+                    write_sch_text(sch_path, content)
                 applied = True
 
             return {

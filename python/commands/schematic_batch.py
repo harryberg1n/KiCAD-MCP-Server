@@ -16,19 +16,22 @@ and the hierarchical-instance fixer when present.
 
 import logging
 import re
+import uuid as _uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from commands.dynamic_symbol_loader import DynamicSymbolLoader
 from commands.pin_locator import PinLocator
 from commands.schematic_text_utils import (
     _extract_property_position,
     _find_facing_label,
+    _find_matching_paren,
     _find_placed_symbol_block,
     _find_project_root,
     _move_property_in_block,
 )
 from commands.wire_manager import WireManager
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -79,6 +82,115 @@ def _bbox_from_pins(all_pins, cx, cy):
     except Exception:
         pass
     return {"x_min": cx - 2.54, "y_min": cy - 2.54, "x_max": cx + 2.54, "y_max": cy + 2.54}
+
+
+def _fmt_angle(angle: float) -> str:
+    """Format a rotation the way KiCad writes it (90, not 90.0)."""
+    f = float(angle)
+    return str(int(f)) if f.is_integer() else str(f)
+
+
+def _pin_numbers_from_symbol_def(def_text: str) -> List[str]:
+    """Extract the pin numbers from a library symbol definition, in order, deduped.
+
+    DeMorgan / multi-style bodies repeat the same pin numbers; the placed
+    symbol carries exactly one (pin "N" (uuid ...)) entry per number.
+    """
+    seen: List[str] = []
+    for m in re.finditer(r'\(number\s+"([^"]+)"', def_text):
+        if m.group(1) not in seen:
+            seen.append(m.group(1))
+    return seen
+
+
+def _patch_placed_symbol_block(
+    block_text: str,
+    new_lib_id: str,
+    new_pin_numbers: List[str],
+    new_rotation: Optional[float] = None,
+) -> str:
+    """Surgically rewrite a placed (symbol ...) block for a symbol swap.
+
+    Only the lib_id, optionally the symbol's own rotation, and the
+    (pin "N" (uuid ...)) set change; position, mirror, uuid, properties and
+    instances stay byte-identical so attached wires and diffs are preserved.
+    Pins present in both old and new symbol keep their uuid entries.
+    """
+    out, n = re.subn(r'(\(lib_id\s+)"[^"]*"', rf'\1"{new_lib_id}"', block_text, count=1)
+    if n != 1:
+        raise ValueError("placed symbol block has no (lib_id ...) node")
+
+    if new_rotation is not None:
+        # The symbol's own (at x y rot) is the first (at ...) in the block —
+        # KiCad emits it before any property blocks.
+        out = re.sub(
+            r"(\(at\s+[\d\.\-]+\s+[\d\.\-]+\s+)[\d\.\-]+(\s*\))",
+            lambda m: f"{m.group(1)}{_fmt_angle(new_rotation)}{m.group(2)}",
+            out,
+            count=1,
+        )
+
+    # Collect existing (pin "N" (uuid ...)) entries with their spans, including
+    # the leading newline + indentation so removals splice cleanly.
+    entries = []  # (number, start, end_inclusive, text, indent)
+    for m in re.finditer(r'\(pin\s+"([^"]+)"', out):
+        start = m.start()
+        end = _find_matching_paren(out, start)
+        if end < 0:
+            continue
+        s = start
+        while s > 0 and out[s - 1] in " \t":
+            s -= 1
+        indent = out[s:start]
+        if s > 0 and out[s - 1] == "\n":
+            s -= 1
+        entries.append((m.group(1), s, end, out[s : end + 1], indent))
+
+    wanted = list(new_pin_numbers)
+    wanted_set = set(wanted)
+
+    # Rebuild, dropping entries for pins the new symbol no longer has.
+    parts = []
+    prev = 0
+    for num, s, e, text, _indent in entries:
+        parts.append(out[prev:s])
+        if num in wanted_set:
+            parts.append(text)
+        prev = e + 1
+    parts.append(out[prev:])
+    out = "".join(parts)
+
+    # Append entries for pins the old symbol did not have, in new-symbol order,
+    # mimicking the existing entry style (KiCad 10 multiline).
+    existing_nums = {num for num, *_ in entries if num in wanted_set}
+    missing = [num for num in wanted if num not in existing_nums]
+    if missing:
+        indent = entries[0][4] if entries else "\t\t"
+        new_text = "".join(
+            f'\n{indent}(pin "{num}"\n{indent}\t(uuid "{_uuid.uuid4()}")\n{indent})'
+            for num in missing
+        )
+        # Insert after the last remaining pin entry; otherwise before
+        # (instances ...); otherwise before the block's closing paren.
+        anchor = None
+        for m in re.finditer(r'\(pin\s+"[^"]+"', out):
+            e = _find_matching_paren(out, m.start())
+            if e >= 0:
+                anchor = e + 1
+        if anchor is None:
+            inst = out.find("(instances")
+            if inst >= 0:
+                s = inst
+                while s > 0 and out[s - 1] in " \t":
+                    s -= 1
+                if s > 0 and out[s - 1] == "\n":
+                    s -= 1
+                anchor = s
+            else:
+                anchor = out.rfind(")")
+        out = out[:anchor] + new_text + out[anchor:]
+
+    return out
 
 
 class SchematicBatchCommands:
@@ -181,7 +293,7 @@ class SchematicBatchCommands:
                             raw_content = (
                                 raw_content[:block_start] + new_block + raw_content[block_end + 1 :]
                             )
-                            schematic_file.write_text(raw_content, encoding="utf-8")
+                            write_sch_text(schematic_file, raw_content)
                             block_text = new_block
 
                     if block_text:
@@ -317,22 +429,6 @@ class SchematicBatchCommands:
             if not sch_file.exists():
                 return {"success": False, "message": f"Schematic not found: {schematic_path}"}
 
-            comp_info = self.iface._handle_get_schematic_component(
-                {"schematicPath": schematic_path, "reference": reference}
-            )
-            if not comp_info.get("success"):
-                return {
-                    "success": False,
-                    "message": f"Cannot find component '{reference}': {comp_info.get('message', '')}",
-                }
-
-            old_pos = comp_info.get("position", {})
-            old_x = old_pos.get("x", 0)
-            old_y = old_pos.get("y", 0)
-            old_rotation = old_pos.get("angle", 0)
-            old_fields = comp_info.get("fields", {})
-            use_rotation = new_rotation if new_rotation is not None else old_rotation
-
             content = sch_file.read_text(encoding="utf-8")
             block_text, block_start, block_end = _find_placed_symbol_block(content, reference)
             if block_text is None:
@@ -341,64 +437,53 @@ class SchematicBatchCommands:
                     "message": f"Component '{reference}' not found in schematic file",
                 }
 
-            trim_start = block_start
-            while trim_start > 0 and content[trim_start - 1] in (" ", "\t"):
-                trim_start -= 1
-            if trim_start > 0 and content[trim_start - 1] == "\n":
-                trim_start -= 1
-            content = content[:trim_start] + content[block_end + 1 :]
-            sch_file.write_text(content, encoding="utf-8")
-
             derived_project_path = _find_project_root(sch_file.parent)
             loader = DynamicSymbolLoader(project_path=derived_project_path)
 
-            def _field_value(name, default):
-                fd = old_fields.get(name)
-                return (
-                    fd.get("value", default)
-                    if isinstance(fd, dict)
-                    else (fd if fd is not None else default)
-                )
-
-            old_value = _field_value("Value", new_type)
-            old_footprint = _field_value("Footprint", "")
-
-            loader.add_component(
-                sch_file,
-                new_library,
-                new_type,
-                reference=reference,
-                value=old_value,
-                footprint=old_footprint,
-                x=old_x,
-                y=old_y,
-                angle=use_rotation,
-                project_path=derived_project_path,
-            )
-
-            fields_to_restore = {}
-            for fname, fdata in old_fields.items():
-                if fname in ("Reference", "Value", "Footprint"):
-                    continue
-                fields_to_restore[fname] = (
-                    fdata.get("value", "") if isinstance(fdata, dict) else str(fdata)
-                )
-
-            if fields_to_restore:
-                content_after = sch_file.read_text(encoding="utf-8")
-                new_block, _, _ = _find_placed_symbol_block(content_after, reference)
-                if new_block:
-                    for fname, fval in fields_to_restore.items():
-                        prop_pat = re.compile(
-                            r'(\(property\s+"' + re.escape(fname) + r'"\s+)"[^"]*"'
-                        )
-                        content_after = prop_pat.sub(
-                            r'\1"' + fval.replace('"', '\\"') + '"', content_after, count=1
-                        )
-                    sch_file.write_text(content_after, encoding="utf-8")
+            # Resolve the new symbol BEFORE touching the file — refuse cleanly
+            # (file untouched) when it cannot be found.
+            def_text = loader.extract_symbol_from_library(new_library, new_type)
+            if not def_text:
+                return {
+                    "success": False,
+                    "message": (
+                        f"Symbol '{new_symbol}' not found in the symbol libraries — "
+                        f"schematic left unchanged"
+                    ),
+                }
+            new_pin_numbers = _pin_numbers_from_symbol_def(def_text)
 
             pin_locator = PinLocator()
-            pins_raw = pin_locator.get_all_symbol_pins(sch_file, reference) or {}
+            old_pins_raw = pin_locator.get_all_symbol_pins(sch_file, reference) or {}
+
+            # Ensure the new symbol's definition exists in (lib_symbols ...).
+            # This mutates the file, so re-locate the placed block afterwards.
+            loader.inject_symbol_into_schematic(sch_file, new_library, new_type)
+            content = sch_file.read_text(encoding="utf-8")
+            block_text, block_start, block_end = _find_placed_symbol_block(content, reference)
+            if block_text is None:
+                return {
+                    "success": False,
+                    "message": f"Component '{reference}' not found after lib_symbols update",
+                }
+
+            # Surgical in-place patch: swap lib_id, sync pin uuid entries, keep
+            # position / (mirror ...) / uuid / properties / instances untouched
+            # so attached wires stay attached and the diff stays reviewable.
+            new_block = _patch_placed_symbol_block(
+                block_text, new_symbol, new_pin_numbers, new_rotation
+            )
+            content = content[:block_start] + new_block + content[block_end + 1 :]
+            write_sch_text(sch_file, content)
+
+            at_m = re.search(r"\(at\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s*\)", new_block)
+            pos = {
+                "x": float(at_m.group(1)) if at_m else 0.0,
+                "y": float(at_m.group(2)) if at_m else 0.0,
+                "rotation": float(at_m.group(3)) if at_m else 0.0,
+            }
+
+            new_pins_raw = pin_locator.get_all_symbol_pins(sch_file, reference) or {}
             pins_def = pin_locator.get_symbol_pins(sch_file, f"{new_library}:{new_type}") or {}
             pins = {
                 pin_num: {
@@ -406,17 +491,46 @@ class SchematicBatchCommands:
                     "y": coords[1],
                     "name": pins_def.get(str(pin_num), {}).get("name", str(pin_num)),
                 }
-                for pin_num, coords in pins_raw.items()
+                for pin_num, coords in new_pins_raw.items()
             }
 
-            return {
+            # Pins whose coordinates changed may leave wires dangling — surface
+            # that instead of silently detaching (the caller can re-route).
+            moved = []
+            for num, old_c in old_pins_raw.items():
+                new_c = new_pins_raw.get(num)
+                if not new_c:
+                    continue
+                try:
+                    if (
+                        abs(float(old_c[0]) - float(new_c[0])) > 0.01
+                        or abs(float(old_c[1]) - float(new_c[1])) > 0.01
+                    ):
+                        moved.append(
+                            {
+                                "pin": str(num),
+                                "from": [float(old_c[0]), float(old_c[1])],
+                                "to": [float(new_c[0]), float(new_c[1])],
+                            }
+                        )
+                except (TypeError, ValueError, IndexError):
+                    continue
+
+            result = {
                 "success": True,
                 "reference": reference,
                 "newSymbol": new_symbol,
-                "position": {"x": old_x, "y": old_y, "rotation": use_rotation},
+                "position": pos,
                 "pins": pins,
-                "message": f"Replaced {reference} with {new_symbol} at ({old_x}, {old_y})",
+                "message": f"Replaced {reference} with {new_symbol} at ({pos['x']}, {pos['y']})",
             }
+            if moved:
+                result["movedPins"] = moved
+                result["warnings"] = [
+                    f"{len(moved)} pin(s) changed position — wires attached to them "
+                    f"may need re-routing: " + ", ".join(m["pin"] for m in moved)
+                ]
+            return result
 
         except Exception as e:
             logger.error(f"Error replacing schematic component: {e}")
@@ -682,7 +796,7 @@ class SchematicBatchCommands:
                         continue
                 new_data.append(item)
             if changed:
-                sch_path.write_text(kicad_dumps(new_data), encoding="utf-8")
+                write_sch_text(sch_path, kicad_dumps(new_data))
         except Exception as e:
             logger.warning(f"replace cleanup failed: {e}")
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from utils.sch_io import write_sch_text
 
 
 def _find_symbol_in_lib(content: str, symbol_name: str) -> tuple[int, int, str] | None:
@@ -84,7 +85,7 @@ def add_symbol_property(params: dict[str, Any]) -> dict[str, Any]:
             block = block.rstrip()[:-1] + "\n\t\t\t" + new_prop + "\n\t\t)"
 
     content = content[:sym_start] + block + content[sym_end + 1 :]
-    lib_path.write_text(content, encoding="utf-8")
+    write_sch_text(lib_path, content)
 
     action = "Updated" if updated else "Added"
     return {

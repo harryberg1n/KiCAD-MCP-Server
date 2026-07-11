@@ -187,6 +187,35 @@ load on every KiCad 10.0.x build.
   loads on every 10.0.x (newer builds silently upgrade on save). This also
   makes `tests/fixtures/canonical_schematic.kicad_sch` loadable by
   `kicad-cli`, which it previously was not.
+- **Schematic writes preserve line endings — no more whole-file rewrites on
+  Windows**: every text-mode write (`open(path, "w")` / `Path.write_text`)
+  translated `\n` to CRLF on Windows, so a one-field
+  `edit_schematic_component` rewrote every line of the `.kicad_sch` (git
+  showed 7596 insertions / 7596 deletions for a one-word change) and made
+  edits unreviewable. All schematic write paths now go through
+  `utils/sch_io.write_sch_text`, which detects the file's existing EOL style
+  from its bytes and preserves it (LF for new files, matching KiCad's own
+  output). A one-field edit now diffs exactly one line; a no-op save is a
+  0-line diff. Also applied to the `.kicad_sym` / sym-lib-table writers
+  (`add_symbol_property`, `symbol_creator`) and the newer schematic writers
+  (`update_symbol_from_library`, `add_library_symbol_property`), which have
+  the same Windows CRLF-translation bug.
+
+- **`replace_schematic_component` is surgical — mirrored symbols no longer
+  flip and wires stay attached**: the old implementation deleted the placed
+  block and re-added the symbol from scratch, dropping `(mirror …)` (the
+  symbol flipped and every wire detached), regenerating the uuid /
+  `in_bom` / `dnp` / instances data from defaults, and re-emitting in a
+  foreign formatting style. It now patches the existing block in place:
+  swaps the `lib_id`, syncs the `(pin "N" (uuid …))` entries (pins present
+  in both symbols keep their uuids), and leaves position, mirror, uuid,
+  properties and instances byte-identical. Replacing a wired mirrored
+  `Conn_01x03` with `Conn_01x04` is now a 5-line diff with zero new
+  unconnected-endpoint ERC violations. The command also refuses cleanly
+  (file untouched) when the new symbol cannot be resolved, instead of
+  deleting the component first and failing afterwards; when a swap does
+  move pins, the result reports `movedPins` plus a warning instead of
+  silently detaching wires.
 
 - **`create_project` writes a conformant KiCad 10 `.kicad_pro`** (#220): the
   project file was a hand-rolled 122-byte stub containing only

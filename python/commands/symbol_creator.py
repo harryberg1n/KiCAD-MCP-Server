@@ -17,6 +17,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -183,7 +184,7 @@ class SymbolCreator:
         else:
             lib_content += "\n" + symbol_block + "\n)\n"
 
-        lib_path.write_text(lib_content, encoding="utf-8")
+        write_sch_text(lib_path, lib_content)
         logger.info(f"Created symbol '{name}' in {lib_path} ({len(pins)} pins)")
 
         return {
@@ -208,7 +209,7 @@ class SymbolCreator:
             return {"success": False, "error": f'Symbol "{name}" not found in {library_path}'}
 
         new_content = self._remove_symbol(content, name)
-        lib_path.write_text(new_content, encoding="utf-8")
+        write_sch_text(lib_path, new_content)
         return {"success": True, "library_path": str(lib_path), "deleted": name}
 
     # ------------------------------------------------------------------ #
@@ -314,7 +315,7 @@ class SymbolCreator:
         else:
             content += "\n" + new_entry + "\n)\n"
 
-        table_path.write_text(content, encoding="utf-8")
+        write_sch_text(table_path, content)
         logger.info(f"Registered symbol library '{name}' in {table_path}")
 
         return {

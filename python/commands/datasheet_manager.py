@@ -13,6 +13,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -248,8 +249,7 @@ class DatasheetManager:
             i += 1
 
         if not dry_run and updated > 0:
-            with open(schematic_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(new_lines))
+            write_sch_text(schematic_path, "\n".join(new_lines))
             logger.info(f"Saved {schematic_path.name}: {updated} datasheet URLs written")
 
         return {

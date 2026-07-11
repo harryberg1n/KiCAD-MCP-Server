@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from skip import Schematic
 from utils.sexpr_format import prettify
+from utils.sch_io import write_sch_text
 
 logger = logging.getLogger("kicad_interface")
 
@@ -118,8 +119,7 @@ class SchematicManager:
             # and produce minimal, reviewable diffs.
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(prettify(content))
+            write_sch_text(file_path, prettify(content))
             logger.info(f"Saved schematic to: {file_path}")
             return True
         except Exception as e:
