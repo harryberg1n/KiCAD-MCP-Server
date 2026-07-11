@@ -63,6 +63,13 @@ export function registerSchematicTools(server: McpServer, callKicadScript: Funct
         .boolean()
         .optional()
         .describe("Mirror the symbol horizontally (flip left-right). Useful for transistors facing opposite direction."),
+      snapToGrid: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "Snap the component origin to the 1.27 mm (50-mil) schematic grid (default true). Off-grid origins put every pin off the connection grid — unreachable by wires.",
+        ),
     },
     async (args: {
       schematicPath: string;
@@ -74,6 +81,7 @@ export function registerSchematicTools(server: McpServer, callKicadScript: Funct
       unit?: number;
       angle?: number;
       mirrorY?: boolean;
+      snapToGrid?: boolean;
     }) => {
       // Transform to what Python backend expects
       const [library, symbolName] = args.symbol.includes(":")
@@ -82,6 +90,7 @@ export function registerSchematicTools(server: McpServer, callKicadScript: Funct
 
       const transformed = {
         schematicPath: args.schematicPath,
+        snapToGrid: args.snapToGrid ?? true,
         component: {
           library,
           type: symbolName,

@@ -10,7 +10,7 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
   // Add many components at once
   server.tool(
     "batch_add_components",
-    "Add multiple components to a schematic in one call (far fewer round-trips than add_schematic_component). Each component: {symbol:'Library:Name', reference, value?, footprint?, position:{x,y}, rotation?, includePins?}. Reference/Value fields are auto-positioned outside the body (disable with auto_position_fields=false). Returns per-component snapped position, field positions, body_bbox, and an overall placement_bbox.",
+    "Add multiple components to a schematic in one call (far fewer round-trips than add_schematic_component). Each component: {symbol:'Library:Name', reference, value?, footprint?, position:{x,y}, rotation?, includePins?}. Positions are snapped to the 1.27 mm connection grid by default (snapToGrid: false to opt out). Reference/Value fields are auto-positioned outside the body (disable with auto_position_fields=false). Returns per-component snapped position, field positions, body_bbox, an overall placement_bbox, and (with includePins) each pin's position, name, and electrical type.",
     {
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       components: z
@@ -33,6 +33,13 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
         .optional()
         .default(true)
         .describe("Auto-place Ref/Value fields outside the body (default true)"),
+      snapToGrid: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "Snap component origins to the 1.27 mm (50-mil) schematic grid (default true). Off-grid origins put every pin off the connection grid — unreachable by wires.",
+        ),
     },
     async (args: any) => {
       const r = await callKicadScript("batch_add_components", args);
@@ -225,6 +232,11 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
         .describe("Components to place and connect"),
       origin_x: z.number().optional(),
       origin_y: z.number().optional(),
+      snapToGrid: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Snap component origins to the 1.27 mm schematic grid (default true)."),
     },
     async (args: any) => {
       const r = await callKicadScript("batch_add_and_connect", args);

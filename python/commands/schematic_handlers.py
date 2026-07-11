@@ -225,6 +225,12 @@ class SchematicHandlersMixin:
             footprint = component.get("footprint", "")
             x = component.get("x", 0)
             y = component.get("y", 0)
+            if params.get("snapToGrid", component.get("snapToGrid", True)):
+                from commands.schematic_batch import _snap
+
+                # Off-grid origins put every pin off the 1.27 mm connection
+                # grid — unreachable by wires, "off connection grid" ERC noise.
+                x, y = _snap(x), _snap(y)
             unit = component.get("unit", 1)
 
             # Derive project path from schematic path for project-local library resolution.

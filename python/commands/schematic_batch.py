@@ -208,6 +208,7 @@ class SchematicBatchCommands:
             origin_x = params.get("origin_x", 0) or 0
             origin_y = params.get("origin_y", 0) or 0
             auto_position_fields = params.get("auto_position_fields", True)
+            snap_to_grid = params.get("snapToGrid", True)
 
             if not schematic_path:
                 return {"success": False, "message": "schematicPath is required"}
@@ -244,6 +245,10 @@ class SchematicBatchCommands:
                 pos = comp.get("position", {})
                 x = (pos.get("x", 0) if isinstance(pos, dict) else 0) + origin_x
                 y = (pos.get("y", 0) if isinstance(pos, dict) else 0) + origin_y
+                if snap_to_grid:
+                    # Off-grid symbol origins put every pin off the 1.27 mm
+                    # connection grid — unreachable by wires, ERC warnings.
+                    x, y = _snap(x), _snap(y)
                 rotation = comp.get("rotation", 0)
                 include_pins = comp.get("includePins", False)
 
@@ -311,6 +316,7 @@ class SchematicBatchCommands:
                                 "x": coords[0],
                                 "y": coords[1],
                                 "name": pins_def.get(str(pin_num), {}).get("name", str(pin_num)),
+                                "type": pins_def.get(str(pin_num), {}).get("type", "passive"),
                             }
                             for pin_num, coords in all_pins.items()
                         }
@@ -490,6 +496,7 @@ class SchematicBatchCommands:
                     "x": coords[0],
                     "y": coords[1],
                     "name": pins_def.get(str(pin_num), {}).get("name", str(pin_num)),
+                    "type": pins_def.get(str(pin_num), {}).get("type", "passive"),
                 }
                 for pin_num, coords in new_pins_raw.items()
             }

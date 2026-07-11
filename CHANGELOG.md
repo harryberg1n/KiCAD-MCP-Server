@@ -55,6 +55,20 @@ All notable changes to the KiCAD MCP Server project are documented here.
   now resolves every `#FLG*` pin's real net through the wire-traced pad→net
   map before warning; tracing failures conservatively keep the warning.
 
+- **Placement snaps to the schematic grid by default**: `batch_add_components`,
+  `batch_add_and_connect`, and `add_schematic_component` wrote caller
+  coordinates verbatim — an off-grid symbol origin puts every pin off the
+  1.27 mm connection grid, unreachable by wires, producing "off connection
+  grid" ERC warnings (the result even *reported* a `snapped_position` that
+  the file didn't match). Origins now snap to the 1.27 mm grid by default;
+  pass `snapToGrid: false` for intentional off-grid placement.
+
+- **Pin electrical type in placement results**: `includePins` pin dicts (and
+  `replace_schematic_component`'s pin report) now carry each pin's
+  electrical `type` (`passive` / `power_in` / `output` / ...) alongside name
+  and position, so polarity-sensitive wiring (LED A/K, diodes) no longer
+  needs a follow-up `get_schematic_pin_locations` round-trip.
+
 - **`run_erc` output filtering** (new params): optional `minSeverity`
   (`info`/`warning`/`error`), `excludeTypes` (violation slugs like
   `lib_symbol_mismatch`), and `maxViolations` trim the returned violations
