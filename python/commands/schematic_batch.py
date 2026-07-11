@@ -800,9 +800,15 @@ class SchematicBatchCommands:
         except Exception as e:
             logger.warning(f"replace cleanup failed: {e}")
 
-    @staticmethod
-    def _pwr_flag_warnings(sch_path, locator, placed):
-        """Warn about power nets that have no PWR_FLAG attached."""
+    def _pwr_flag_warnings(self, sch_path, locator, placed):
+        """Warn about power nets that have no PWR_FLAG attached.
+
+        Two-stage check: a cheap coordinate-coincidence pass against the pins
+        placed in this call, then — only for nets still unaccounted for — a
+        real wire-traced pad→net resolution of every PWR_FLAG in the file, so
+        a flag connected to the net elsewhere (via wire, or placed in an
+        earlier call) does not trigger a false positive.
+        """
         keywords = {
             "VCC",
             "VDD",
@@ -853,6 +859,20 @@ class SchematicBatchCommands:
             except Exception:
                 pass
             missing = sorted(power_nets - pwr_flag_nets)
+            if missing:
+                # Slow path: resolve every PWR_FLAG's actual net by wire
+                # tracing. Flags are identified by the #FLG reference prefix
+                # KiCad assigns to PWR_FLAG symbols.
+                try:
+                    pad_net_map, _ = self.iface._build_hierarchical_pad_net_map(str(sch_path))
+                    flagged = {
+                        str(net).lstrip("/")
+                        for (ref, _pin), net in pad_net_map.items()
+                        if str(ref).startswith("#FLG")
+                    }
+                    missing = [n for n in missing if n.lstrip("/") not in flagged]
+                except Exception:
+                    pass  # conservative: keep the warning if tracing fails
             if missing:
                 return [
                     f"Power nets without PWR_FLAG: {', '.join(missing)}. "

@@ -36,6 +36,32 @@ All notable changes to the KiCAD MCP Server project are documented here.
 
 ### Bug Fixes
 
+- **Placing `power:*` symbols no longer corrupts the schematic**: every
+  power-symbol library Description contains escaped quotes (`\"GND\"`), and
+  `_extract_lib_property_value` matched strings with `"([^"]*)"` — stopping
+  at the backslash and returning a value with a trailing `\`. The placed
+  instance then emitted `"...name \"`, whose `\"` escapes the closing quote
+  so the string silently swallows the following s-expressions (pins, the
+  next symbol) and the file becomes unparseable by kicad-cli. Extraction is
+  now escape-aware and property emission escapes values, so any
+  quote-containing Description — or caller-supplied value — round-trips
+  correctly. Verified end-to-end against the real KiCad 10 `power:GND`.
+
+- **`batch_connect` no longer warns "power nets without PWR_FLAG" when the
+  flag exists elsewhere on the net**: the check only matched PWR_FLAGs whose
+  pin coordinate coincided with a pin placed in the *current* call, so a
+  flag connected via a wire — or placed in an earlier call — still triggered
+  the warning. When the quick coincidence pass leaves candidates, the check
+  now resolves every `#FLG*` pin's real net through the wire-traced pad→net
+  map before warning; tracing failures conservatively keep the warning.
+
+- **`run_erc` output filtering** (new params): optional `minSeverity`
+  (`info`/`warning`/`error`), `excludeTypes` (violation slugs like
+  `lib_symbol_mismatch`), and `maxViolations` trim the returned violations
+  list — the summary always carries full unfiltered counts plus
+  `filtered_out`, so nothing is hidden, just not itemized. Cuts the
+  ~30-benign-warnings-per-call token cost of using ERC as a gate.
+
 - **`import_ses` no longer creates phantom slashless nets — routed tracks bind
   to the real board nets** (#246): KiCad global-label nets are named with a
   leading `/` (e.g. `/GND`), but a Specctra DSN round-trip through Freerouting

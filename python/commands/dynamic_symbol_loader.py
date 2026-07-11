@@ -18,6 +18,16 @@ from utils.sch_io import write_sch_text
 logger = logging.getLogger("kicad_interface")
 
 
+def _escape_sexpr_string(value: str) -> str:
+    """Escape a logical string for embedding in a double-quoted s-expr token."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _unescape_sexpr_string(raw: str) -> str:
+    """Inverse of _escape_sexpr_string for a token captured from file text."""
+    return re.sub(r"\\(.)", r"\1", raw)
+
+
 class DynamicSymbolLoader:
     """
     Dynamically loads symbols from KiCad library files and injects them into schematics.
@@ -789,8 +799,14 @@ class DynamicSymbolLoader:
             if sym_start == -1:
                 return None
             sym_block = self._extract_paren_block(content, sym_start)
-            m = re.search(r'\(property\s+"' + re.escape(prop_name) + r'"\s+"([^"]*)"', sym_block)
-            return m.group(1) if m else None
+            # Escape-aware string match: power:* Descriptions contain \" — the
+            # naive [^"]* stops at the backslash and returns a truncated value
+            # ending in a lone backslash, which corrupts the file on re-emit.
+            m = re.search(
+                r'\(property\s+"' + re.escape(prop_name) + r'"\s+"((?:[^"\\]|\\.)*)"',
+                sym_block,
+            )
+            return _unescape_sexpr_string(m.group(1)) if m else None
         except Exception:
             return None
 
@@ -874,6 +890,7 @@ class DynamicSymbolLoader:
             Field order: at, [hide yes], show_name no, do_not_autoplace no, effects.
             """
             hide_line = "      (hide yes)\n" if hide else ""
+            value = _escape_sexpr_string(str(value))
             return (
                 f'    (property "{name}" "{value}"\n'
                 f"      (at {_fmt(px)} {_fmt(py)} {_fmt(pa)})\n"

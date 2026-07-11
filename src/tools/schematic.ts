@@ -1459,15 +1459,41 @@ edit_schematic_component and set its value to an empty string.`,
   // Run Electrical Rules Check (ERC)
   server.tool(
     "run_erc",
-    "Runs the KiCAD Electrical Rules Check (ERC) on a schematic and returns all violations. Use after wiring to verify the schematic before generating a netlist.",
+    "Runs the KiCAD Electrical Rules Check (ERC) on a schematic and returns the violations. Use after wiring to verify the schematic before generating a netlist. The summary always reports full counts; minSeverity / excludeTypes / maxViolations only trim the returned list (e.g. minSeverity: 'error' for a quick gate, excludeTypes: ['lib_symbol_mismatch'] to mute a known-benign warning storm).",
     {
       schematicPath: z.string().describe("Path to the .kicad_sch schematic file"),
+      minSeverity: z
+        .enum(["info", "warning", "error"])
+        .optional()
+        .describe(
+          "Lowest severity to include in the violations list (default 'info' = everything). Summary counts are always unfiltered.",
+        ),
+      excludeTypes: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Violation type slugs to drop from the list, e.g. ['lib_symbol_mismatch', 'endpoint_off_grid']. Dropped entries still appear in the summary counts.",
+        ),
+      maxViolations: z
+        .number()
+        .optional()
+        .describe("Cap the number of violations returned (0 or omitted = unlimited)."),
     },
-    async (args: { schematicPath: string }) => {
+    async (args: {
+      schematicPath: string;
+      minSeverity?: string;
+      excludeTypes?: string[];
+      maxViolations?: number;
+    }) => {
       const result = await callKicadScript("run_erc", args);
       if (result.success) {
         const violations: any[] = result.violations || [];
-        const lines: string[] = [`ERC result: ${violations.length} violation(s)`];
+        const total: number = result.summary?.total ?? violations.length;
+        const filtered: number = result.summary?.filtered_out ?? 0;
+        const lines: string[] = [
+          `ERC result: ${total} violation(s)` +
+            (filtered ? ` (${filtered} filtered from output)` : ""),
+        ];
         if (result.summary?.by_severity) {
           const s = result.summary.by_severity;
           lines.push(

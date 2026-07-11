@@ -91,6 +91,30 @@ def _svg_to_png(svg_path: str, width: int, height: int) -> Optional[bytes]:
     return None
 
 
+_ERC_SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
+
+
+def _filter_erc_violations(violations, min_severity, exclude_types, max_violations):
+    """Filter an ERC violation list; returns (kept, removed_count).
+
+    min_severity: "info" keeps everything; "warning"/"error" raise the bar.
+    An unknown value disables the severity filter rather than dropping data.
+    exclude_types: violation type slugs to drop (e.g. "lib_symbol_mismatch").
+    max_violations: cap the kept list; 0 = unlimited.
+    """
+    threshold = _ERC_SEVERITY_RANK.get(min_severity, 0)
+    excluded = set(exclude_types or [])
+    kept = [
+        v
+        for v in violations
+        if _ERC_SEVERITY_RANK.get(v.get("severity", "error"), 2) >= threshold
+        and v.get("type") not in excluded
+    ]
+    if max_violations and max_violations > 0:
+        kept = kept[:max_violations]
+    return kept, len(violations) - len(kept)
+
+
 class SchematicHandlersMixin:
     """Schematic-domain handlers mixed into KiCADInterface."""
 
@@ -2397,6 +2421,9 @@ class SchematicHandlersMixin:
 
         try:
             schematic_path = params.get("schematicPath")
+            min_severity = params.get("minSeverity", "info")
+            exclude_types = params.get("excludeTypes", [])
+            max_violations = int(params.get("maxViolations", 0) or 0)
             if not schematic_path or not os.path.exists(schematic_path):
                 return {
                     "success": False,
@@ -2474,14 +2501,19 @@ class SchematicHandlersMixin:
                     if vseverity in severity_counts:
                         severity_counts[vseverity] += 1
 
+                kept, removed = _filter_erc_violations(
+                    violations, min_severity, exclude_types, max_violations
+                )
                 return {
                     "success": True,
-                    "message": f"ERC complete: {len(violations)} violation(s)",
+                    "message": f"ERC complete: {len(violations)} violation(s)"
+                    + (f" ({removed} filtered from output)" if removed else ""),
                     "summary": {
                         "total": len(violations),
                         "by_severity": severity_counts,
+                        "filtered_out": removed,
                     },
-                    "violations": violations,
+                    "violations": kept,
                 }
 
             finally:
