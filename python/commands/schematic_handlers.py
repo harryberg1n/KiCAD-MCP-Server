@@ -1693,13 +1693,13 @@ class SchematicHandlersMixin:
             old_position = {"x": old_x, "y": old_y}
 
             drag_summary = {}
+            old_to_new: Dict[Any, Any] = {}
             if preserve_wires:
                 # Compute pin world positions before and after the move
                 pin_positions = WireDragger.compute_pin_positions(
                     sch_data, reference, float(new_x), float(new_y)
                 )
                 # Build old→new coordinate map (deduplicate coincident pins)
-                old_to_new = {}
                 for _pin, (old_xy, new_xy) in pin_positions.items():
                     if old_xy in old_to_new:
                         logger.warning(
@@ -1722,7 +1722,10 @@ class SchematicHandlersMixin:
             # Update symbol position
             WireDragger.update_symbol_position(sch_data, reference, float(new_x), float(new_y))
 
-            WireManager.sync_junctions(sch_data)
+            # Junctions travel with dragged wires (drag_wires moves them);
+            # only the pins' NEW landing points may need a fresh dot. Never
+            # recompute sheet-wide — that deleted junctions at untouched nodes.
+            WireManager.sync_junctions(sch_data, candidate_points=list(old_to_new.values()))
 
             write_sch_text(schematic_path, kicad_dumps(sch_data))
 
@@ -1805,7 +1808,9 @@ class SchematicHandlersMixin:
                 sch_data, reference, float(angle), effective_mirror
             )
 
-            WireManager.sync_junctions(sch_data)
+            # Only the pins' NEW landing points may need a fresh dot — never
+            # recompute sheet-wide (that deleted junctions at untouched nodes).
+            WireManager.sync_junctions(sch_data, candidate_points=list(old_to_new.values()))
 
             write_sch_text(schematic_path, kicad_dumps(sch_data))
 

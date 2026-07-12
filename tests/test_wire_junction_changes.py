@@ -954,12 +954,18 @@ class TestSyncJunctionsUnit:
         assert removed == 0
         assert _find_elements(data, "junction") == []
 
-    def test_stale_junction_removed(self) -> None:
-        """A junction with fewer than 3 wire endpoints at its position is removed."""
+    def test_stale_looking_junction_is_left_alone(self) -> None:
+        """A junction the >=3-endpoint heuristic calls redundant is PRESERVED.
+
+        Junctions are user/GUI data. The heuristic is wrong at wire-end-on-
+        wire-middle T-nodes (1 endpoint) and whenever pin transforms
+        miscount, so sync_junctions never removes (bifrost incident
+        2026-07-12: a dropped junction produced a real ERC error).
+        """
         from commands.wire_manager import WireManager
 
         data = self._base_data()
-        # Only two wires meeting at (10,0) — junction is stale
+        # Only two wires meeting at (10,0) — looks redundant to the heuristic
         data.insert(1, self._wire(0, 0, 10, 0))
         data.insert(1, self._wire(10, 0, 20, 0))
         data.insert(1, self._junction(10, 0))
@@ -967,8 +973,8 @@ class TestSyncJunctionsUnit:
         added, removed = WireManager.sync_junctions(data)
 
         assert added == 0
-        assert removed == 1
-        assert _find_elements(data, "junction") == []
+        assert removed == 0
+        assert len(_find_elements(data, "junction")) == 1
 
     def test_x_junction_gets_one_junction(self) -> None:
         """Four wire endpoints meeting (X-junction) → exactly one junction."""
@@ -1038,8 +1044,13 @@ class TestSyncJunctionsIntegration:
         junctions = _find_elements(data, "junction")
         assert junctions == [], f"Expected no junctions, got {len(junctions)}"
 
-    def test_delete_wire_removes_stale_junction(self, sch: Any) -> None:
-        """Removing a wire that was part of a T-junction should remove the junction."""
+    def test_delete_wire_leaves_orphaned_junction_in_place(self, sch: Any) -> None:
+        """Removing a T-branch wire leaves the junction dot in place.
+
+        An orphaned dot is harmless (the GUI cleans it up on edit); silently
+        deleting junctions broke connectivity at unrelated nodes (bifrost
+        incident 2026-07-12), so delete_wire no longer touches them.
+        """
         from commands.wire_manager import WireManager
 
         WireManager.add_wire(sch, [0, 10], [10, 10])
@@ -1052,8 +1063,7 @@ class TestSyncJunctionsIntegration:
         WireManager.delete_wire(sch, [10, 0], [10, 10])  # remove the branch
 
         data = _parse_sch(sch)
-        junctions = _find_elements(data, "junction")
-        assert junctions == [], f"Expected junction removed, got {len(junctions)}"
+        assert len(_find_elements(data, "junction")) == 1, "junction must be preserved"
 
     def test_polyline_t_junction_auto_inserted(self, sch: Any) -> None:
         """Polyline whose endpoint hits a wire midpoint auto-inserts a junction."""

@@ -202,7 +202,7 @@ class WireManager:
             sch_data.insert(sheet_instances_index, wire_sexp)
             logger.info(f"Injected wire from {start_point} to {end_point}")
 
-            WireManager.sync_junctions(sch_data)
+            WireManager.sync_junctions(sch_data, candidate_points=[start_point, end_point])
 
             # Write back
             write_sch_text(schematic_path, kicad_dumps(sch_data))
@@ -280,7 +280,7 @@ class WireManager:
                 f"Injected {len(wire_sexps)} wire segments for {len(points)}-point polyline"
             )
 
-            WireManager.sync_junctions(sch_data)
+            WireManager.sync_junctions(sch_data, candidate_points=points)
 
             # Write back
             write_sch_text(schematic_path, kicad_dumps(sch_data))
@@ -667,14 +667,26 @@ class WireManager:
         return world_positions
 
     @staticmethod
-    def sync_junctions(sch_data: list) -> Tuple[int, int]:
-        """Add missing junctions and remove stale ones in sch_data in-place.
+    def sync_junctions(
+        sch_data: list, candidate_points: Optional[List[Tuple[float, float]]] = None
+    ) -> Tuple[int, int]:
+        """Add missing junctions at nodes the current edit touched. NEVER removes.
 
-        A junction is needed at any point where the total of wire endpoints plus
-        component pin positions is ≥ 3 and at least one wire endpoint is present.
-        This covers wire-only T/X junctions and wire-meets-pin-with-another-wire cases.
+        Junctions are user/GUI data. The old whole-sheet recompute deleted any
+        junction failing a "wire endpoints + pins >= 3" heuristic — wrong
+        exactly where KiCad REQUIRES a junction (a wire END on another wire's
+        MIDDLE contributes only one endpoint), so unrelated edits silently
+        dropped T-node junctions and broke connectivity. An orphaned dot, by
+        contrast, is harmless and the GUI cleans it up.
 
-        Returns (added_count, removed_count).
+        A junction is added where wire endpoints + component pins total >= 3
+        and at least one wire endpoint is present, restricted to
+        candidate_points — the (x, y) coordinates the current edit touched.
+        None considers every wire endpoint (wire-creation paths, where the new
+        wire may have completed a T/X node anywhere along it); pass [] for
+        operations that must not add any.
+
+        Returns (added_count, removed_count); removed_count is always 0.
         """
         from collections import Counter
 
@@ -691,14 +703,12 @@ class WireManager:
         # wire_iu.items() guarantees wire_cnt >= 1, so no extra guard needed
         needed_iu = {iu for iu, wire_cnt in wire_iu.items() if wire_cnt + pin_iu.get(iu, 0) >= 3}
 
+        if candidate_points is not None:
+            cand_iu = {(round(x * _IU_PER_MM), round(y * _IU_PER_MM)) for x, y in candidate_points}
+            needed_iu &= cand_iu
+
         existing = WireManager._get_existing_junctions(sch_data)
         existing_iu = set(existing.keys())
-
-        # Remove stale junctions; work in reverse index order to avoid shifting
-        stale_indices = sorted([existing[iu] for iu in existing_iu - needed_iu], reverse=True)
-        for idx in stale_indices:
-            del sch_data[idx]
-        removed = len(stale_indices)
 
         # Locate insertion point for new junctions
         sheet_instances_index = None
@@ -720,9 +730,9 @@ class WireManager:
                     sheet_instances_index += 1
                     added += 1
 
-        if added or removed:
-            logger.info(f"sync_junctions: added {added}, removed {removed}")
-        return added, removed
+        if added:
+            logger.info(f"sync_junctions: added {added}")
+        return added, 0
 
     @staticmethod
     def add_no_connect(schematic_path: Path, position: List[float]) -> bool:
@@ -847,7 +857,9 @@ class WireManager:
 
                 if match_fwd or match_rev:
                     del sch_data[i]
-                    WireManager.sync_junctions(sch_data)
+                    # No junction sync: deletion never creates a >= 3 node, and
+                    # a possibly-orphaned dot is left for the GUI to clean up —
+                    # silently removing it breaks connectivity elsewhere.
                     write_sch_text(schematic_path, kicad_dumps(sch_data))
                     logger.info(f"Deleted wire from {start_point} to {end_point}")
                     return True

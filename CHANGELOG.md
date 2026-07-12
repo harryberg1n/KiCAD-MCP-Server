@@ -36,6 +36,23 @@ All notable changes to the KiCAD MCP Server project are documented here.
 
 ### Bug Fixes
 
+- **Junction dots are preserved — edits no longer silently drop or add
+  `(junction ...)` at untouched nodes**: `sync_junctions` recomputed the whole
+  sheet's junction set after every wire/move/rotate op from a "wire endpoints
+  + pins >= 3" heuristic, deleting any junction that failed it. The heuristic
+  is wrong exactly where KiCad REQUIRES a junction — a wire END on another
+  wire's MIDDLE contributes only one endpoint — so moving an unrelated
+  component silently dropped a T-node junction and produced a real
+  "pin not connected" ERC error; pin-transform miscounts also ADDED dots at
+  plain corners. sync_junctions now never removes a junction (they are
+  user/GUI data; an orphaned dot is harmless and the GUI cleans it up) and
+  only adds at the coordinates the current edit actually touched
+  (`candidate_points`): new-wire endpoints, polyline vertices, or the dragged
+  pins' new landing points on move/rotate. `delete_schematic_wire` leaves
+  junctions entirely alone. Verified against the bifrost coildrive incident
+  files: a property-only edit and a wired-component move both leave the
+  17-junction set byte-identical.
+
 - **Placing `power:*` symbols no longer corrupts the schematic**: every
   power-symbol library Description contains escaped quotes (`\"GND\"`), and
   `_extract_lib_property_value` matched strings with `"([^"]*)"` — stopping
